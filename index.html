@@ -1133,7 +1133,25 @@
       <div class="toast" id="toast"></div>
   </div>
 
-  <script>
+  <script type="module">
+      // Import the functions you need from the SDKs you need
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+      import { getDatabase, ref, set, get, child, update, push } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyAvqIn229gt2_pZNmSXQrI1LQQRmJcrhME",
+        authDomain: "money--hunt-test.firebaseapp.com",
+        databaseURL: "https://money--hunt-test-default-rtdb.firebaseio.com",
+        projectId: "money--hunt-test",
+        storageBucket: "money--hunt-test.firebasestorage.app",
+        messagingSenderId: "322666407843",
+        appId: "1:322666407843:web:6857fec8d064c0add25c16",
+        measurementId: "G-CNWHF1KTRR"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const database = getDatabase(app);
+
       // Configuration (Keep these the same or update as needed)
       const APP_NAME = "Mini Cat Earning";
       const ADS_PER_DAY_LIMIT = 5500;
@@ -1188,6 +1206,8 @@
           referredUsers: []
       };
 
+      let userId = null;
+
       // Show toast notification
       function showToast(message, duration = 3000) {
           toast.textContent = message;
@@ -1210,141 +1230,175 @@
           return Math.random().toString(36).substring(2, 10).toUpperCase();
       }
 
-      // Load user state from localStorage or Telegram WebApp
-      function loadUserState() {
-          let deviceId = localStorage.getItem('galaxyEarnDeviceId');
-          if (!deviceId) {
-              deviceId = generateDeviceId();
-              localStorage.setItem('galaxyEarnDeviceId', deviceId);
-          }
-
-          let allUsersData = JSON.parse(localStorage.getItem('galaxyEarnAllUsers')) || {};
-
+      // Get user ID based on Telegram or device
+      function getUserId() {
           if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe.user) {
-              const tgUser = Telegram.WebApp.initDataUnsafe.user;
-              const existingUser = Object.values(allUsersData).find(user => user.telegramId === tgUser.id);
+              return `tg_${Telegram.WebApp.initDataUnsafe.user.id}`;
+          } else {
+              let deviceId = localStorage.getItem('galaxyEarnDeviceId');
+              if (!deviceId) {
+                  deviceId = generateDeviceId();
+                  localStorage.setItem('galaxyEarnDeviceId', deviceId);
+              }
+              return `device_${deviceId}`;
+          }
+      }
 
-              if (existingUser) {
-                  currentUser = existingUser;
-                  const existingDeviceIdForTgUser = Object.keys(allUsersData).find(id => allUsersData[id].telegramId === tgUser.id);
-                  if (existingDeviceIdForTgUser && existingDeviceIdForTgUser !== deviceId) {
-                       localStorage.setItem('galaxyEarnDeviceId', existingDeviceIdForTgUser);
-                       deviceId = existingDeviceIdForTgUser;
-                       currentUser = allUsersData[deviceId];
-                  } else {
-                      Object.assign(currentUser, {
-                          name: `${tgUser.first_name || ''} ${tgUser.last_name || ''}`.trim() || currentUser.name,
-                          photoUrl: tgUser.photo_url || currentUser.photoUrl,
-                          telegramId: tgUser.id
-                      });
-                      allUsersData[deviceId] = currentUser;
-                      localStorage.setItem('galaxyEarnAllUsers', JSON.stringify(allUsersData));
+      // Load user state from Firebase
+      async function loadUserState() {
+          userId = getUserId();
+          
+          try {
+              const userRef = ref(database, 'users/' + userId);
+              const snapshot = await get(userRef);
+              
+              if (snapshot.exists()) {
+                  // User exists in Firebase
+                  currentUser = snapshot.val();
+                  
+                  // Update with Telegram data if available
+                  if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe.user) {
+                      const tgUser = Telegram.WebApp.initDataUnsafe.user;
+                      const tgName = `${tgUser.first_name || ''} ${tgUser.last_name || ''}`.trim();
+                      if (tgName && tgName !== currentUser.name) {
+                          currentUser.name = tgName;
+                          currentUser.telegramId = tgUser.id;
+                          currentUser.photoUrl = tgUser.photo_url || currentUser.photoUrl;
+                          await saveUserState();
+                      }
                   }
               } else {
-                  currentUser = {
-                      name: `${tgUser.first_name || ''} ${tgUser.last_name || ''}`.trim() || `User${tgUser.id}`,
-                      telegramId: tgUser.id,
-                      photoUrl: tgUser.photo_url || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png',
-                      points: 0,
-                      adsWatchedToday: 0,
-                      totalAdsWatchedLifetime: 0,
-                      lastAdWatchDate: null,
-                      claimedBonuses: [],
-                      referralCode: generateReferralCode(),
-                      referredBy: null,
-                      referredUsers: []
-                  };
-                  allUsersData[deviceId] = currentUser;
-                  localStorage.setItem('galaxyEarnAllUsers', JSON.stringify(allUsersData));
+                  // New user - create in Firebase
+                  if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe.user) {
+                      const tgUser = Telegram.WebApp.initDataUnsafe.user;
+                      currentUser = {
+                          name: `${tgUser.first_name || ''} ${tgUser.last_name || ''}`.trim() || `User${tgUser.id}`,
+                          telegramId: tgUser.id,
+                          photoUrl: tgUser.photo_url || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png',
+                          points: 0,
+                          adsWatchedToday: 0,
+                          totalAdsWatchedLifetime: 0,
+                          lastAdWatchDate: null,
+                          claimedBonuses: [],
+                          referralCode: generateReferralCode(),
+                          referredBy: null,
+                          referredUsers: []
+                      };
+                  } else {
+                      currentUser = {
+                          name: 'Guest User',
+                          telegramId: null,
+                          photoUrl: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png',
+                          points: 0,
+                          adsWatchedToday: 0,
+                          totalAdsWatchedLifetime: 0,
+                          lastAdWatchDate: null,
+                          claimedBonuses: [],
+                          referralCode: generateReferralCode(),
+                          referredBy: null,
+                          referredUsers: []
+                      };
+                  }
+                  
+                  await saveUserState();
               }
-          } else {
-              if (!allUsersData[deviceId]) {
-                  allUsersData[deviceId] = {
-                      name: 'Guest User',
-                      telegramId: null,
-                      photoUrl: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png',
-                      points: 0,
-                      adsWatchedToday: 0,
-                      totalAdsWatchedLifetime: 0,
-                      lastAdWatchDate: null,
-                      claimedBonuses: [],
-                      referralCode: generateReferralCode(),
-                      referredBy: null,
-                      referredUsers: []
-                  };
-                  localStorage.setItem('galaxyEarnAllUsers', JSON.stringify(allUsersData));
+
+              // Check for referral code in URL
+              const urlParams = new URLSearchParams(window.location.search);
+              const refCodeFromUrl = urlParams.get('startapp');
+              
+              if (refCodeFromUrl && !currentUser.referredBy && refCodeFromUrl !== currentUser.referralCode) {
+                  await applyReferral(refCodeFromUrl);
               }
-              currentUser = allUsersData[deviceId];
+
+              updateUI();
+          } catch (error) {
+              console.error("Error loading user state:", error);
+              showToast("Error loading data. Please refresh.");
           }
+      }
 
-          if (currentUser.photoUrl) {
-              profilePic.src = currentUser.photoUrl;
+      // Save user state to Firebase
+      async function saveUserState() {
+          if (!userId) return;
+          
+          try {
+              await set(ref(database, 'users/' + userId), currentUser);
+          } catch (error) {
+              console.error("Error saving user state:", error);
+              showToast("Error saving data.");
           }
-
-          const urlParams = new URLSearchParams(window.location.search);
-          const refCodeFromUrl = urlParams.get('startapp');
-
-          if (refCodeFromUrl && !currentUser.referredBy && refCodeFromUrl !== currentUser.referralCode) {
-              const referrerExists = Object.values(allUsersData).some(user => user.referralCode === refCodeFromUrl);
-              if (referrerExists) {
-                  applyReferral(refCodeFromUrl);
-              } else {
-                  console.warn(`Referral code '${refCodeFromUrl}' from URL is not valid.`);
-              }
-          }
-
-          updateUI();
       }
 
       // Apply referral code
-      function applyReferral(referrerCode) {
+      async function applyReferral(referrerCode) {
           if (referrerCode === currentUser.referralCode || currentUser.referredBy) {
               return;
           }
 
-          let allUsersData = JSON.parse(localStorage.getItem('galaxyEarnAllUsers')) || {};
-          const referrerUser = Object.values(allUsersData).find(user => user.referralCode === referrerCode);
+          try {
+              // Find referrer by referral code
+              const usersRef = ref(database, 'users');
+              const snapshot = await get(usersRef);
+              let referrerUser = null;
+              let referrerUserId = null;
 
-          if (referrerUser) {
-              currentUser.points += REFERRAL_BONUS_REFEREE;
-              currentUser.referredBy = referrerCode;
+              if (snapshot.exists()) {
+                  const users = snapshot.val();
+                  for (const [id, user] of Object.entries(users)) {
+                      if (user.referralCode === referrerCode) {
+                          referrerUser = user;
+                          referrerUserId = id;
+                          break;
+                      }
+                  }
+              }
 
-              referrerUser.points += REFERRAL_BONUS_REFERRER;
-              if (referrerUser.referredUsers) {
-                  referrerUser.referredUsers.push(currentUser.referralCode);
+              if (referrerUser && referrerUserId) {
+                  // Update both users in Firebase
+                  const updates = {};
+                  
+                  // Update current user
+                  currentUser.points += REFERRAL_BONUS_REFEREE;
+                  currentUser.referredBy = referrerCode;
+                  updates[`users/${userId}/points`] = currentUser.points;
+                  updates[`users/${userId}/referredBy`] = referrerCode;
+                  
+                  // Update referrer user
+                  const updatedReferredUsers = referrerUser.referredUsers ? [...referrerUser.referredUsers, currentUser.referralCode] : [currentUser.referralCode];
+                  updates[`users/${referrerUserId}/points`] = referrerUser.points + REFERRAL_BONUS_REFERRER;
+                  updates[`users/${referrerUserId}/referredUsers`] = updatedReferredUsers;
+
+                  // Apply all updates
+                  await update(ref(database), updates);
+                  
+                  showToast(`+${REFERRAL_BONUS_REFEREE} bonus Taka for joining via referral!`);
+                  sendTelegramReferralNotification(
+                      currentUser.name,
+                      currentUser.referralCode,
+                      referrerUser.name,
+                      referrerCode
+                  );
+                  updateUI();
               } else {
-                  referrerUser.referredUsers = [currentUser.referralCode];
+                  console.warn(`Referrer with code ${referrerCode} not found.`);
+                  showToast("Invalid referral code.");
               }
-
-              const referrerDeviceId = Object.keys(allUsersData).find(id => allUsersData[id].referralCode === referrerCode);
-              if (referrerDeviceId) {
-                  allUsersData[referrerDeviceId] = referrerUser;
-              }
-
-              localStorage.setItem('galaxyEarnAllUsers', JSON.stringify(allUsersData));
-              showToast(`+${REFERRAL_BONUS_REFEREE} bonus Taka for joining via referral!`);
-              sendTelegramReferralNotification(
-                  currentUser.name,
-                  currentUser.referralCode,
-                  referrerUser.name,
-                  referrerCode
-              );
-              updateUI();
-          } else {
-              console.warn(`Referrer with code ${referrerCode} not found.`);
-              showToast("Invalid referral code.");
+          } catch (error) {
+              console.error("Error applying referral:", error);
+              showToast("Error applying referral.");
           }
       }
 
       // Initialize the app
-      document.addEventListener('DOMContentLoaded', () => {
+      document.addEventListener('DOMContentLoaded', async () => {
           if (window.Telegram && Telegram.WebApp) {
               Telegram.WebApp.expand();
               Telegram.WebApp.enableClosingConfirmation();
           }
-          loadUserState();
+          
+          await loadUserState();
           applyTheme(localStorage.getItem('galaxyEarnTheme') || 'light');
-
           navigateTo('home');
 
           themeToggleBtn.addEventListener('click', toggleTheme);
@@ -1396,12 +1450,12 @@
           }
       }
 
-      function promptForNewName() {
+      async function promptForNewName() {
           const newName = prompt("Enter your new name:", currentUser.name);
           if (newName && newName.trim()) {
               currentUser.name = newName.trim();
               updateUI();
-              saveUserState();
+              await saveUserState();
               showToast("Name updated successfully!");
           }
       }
@@ -1494,7 +1548,7 @@
 
       function renderBonusPage() {
           let channelsHtml = BONUS_CHANNELS.map(channel => {
-              const isClaimed = currentUser.claimedBonuses.includes(channel.id);
+              const isClaimed = currentUser.claimedBonuses ? currentUser.claimedBonuses.includes(channel.id) : false;
               const linkIsValid = channel.link && !channel.link.toLowerCase().includes("your_");
               return `
                   <li class="channel-item">
@@ -1572,7 +1626,7 @@
           document.getElementById('submitWithdrawBtn').addEventListener('click', handleSubmitWithdrawal);
       }
 
-      function renderReferralPage() {
+      async function renderReferralPage() {
           // Updated referral link format as requested
           const referralLink = `https://t.me/minicatearning_bot/app?startapp=${currentUser.referralCode}`;
           const referredUsersCount = currentUser.referredUsers ? currentUser.referredUsers.length : 0;
@@ -1582,21 +1636,32 @@
               referredUsersListHtml = `
                   <h3 style="margin: 20px 0 10px; font-size: 1rem; color: var(--text-secondary);">Your Referrals (${referredUsersCount})</h3>
                   <div class="referred-users">`;
-              const allUsersData = JSON.parse(localStorage.getItem('galaxyEarnAllUsers')) || {};
-              currentUser.referredUsers.forEach(refCode => {
-                  const referredUser = Object.values(allUsersData).find(user => user.referralCode === refCode);
-                  const name = referredUser ? referredUser.name : `User ${refCode}`;
-                  referredUsersListHtml += `
-                      <div class="user-item">
-                          <div class="user-avatar">
-                              <i class="fas fa-user"></i>
-                          </div>
-                          <div class="user-info">
-                              <div class="user-name">${name}</div>
-                              <div class="user-code">${refCode}</div>
-                          </div>
-                      </div>`;
-              });
+              
+              try {
+                  const usersRef = ref(database, 'users');
+                  const snapshot = await get(usersRef);
+                  
+                  if (snapshot.exists()) {
+                      const allUsers = snapshot.val();
+                      for (const refCode of currentUser.referredUsers) {
+                          const referredUser = Object.values(allUsers).find(user => user.referralCode === refCode);
+                          const name = referredUser ? referredUser.name : `User ${refCode}`;
+                          referredUsersListHtml += `
+                              <div class="user-item">
+                                  <div class="user-avatar">
+                                      <i class="fas fa-user"></i>
+                                  </div>
+                                  <div class="user-info">
+                                      <div class="user-name">${name}</div>
+                                      <div class="user-code">${refCode}</div>
+                                  </div>
+                              </div>`;
+                      }
+                  }
+              } catch (error) {
+                  console.error("Error loading referred users:", error);
+              }
+              
               referredUsersListHtml += `</div>`;
           } else {
               referredUsersListHtml = `
@@ -1679,12 +1744,12 @@
       let adWatchedSuccessfully = false;
       let adRewardPending = false;
 
-      function handleWatchDailyAd() {
+      async function handleWatchDailyAd() {
           const today = new Date().toLocaleDateString();
           if (currentUser.lastAdWatchDate !== today) {
               currentUser.adsWatchedToday = 0;
               currentUser.lastAdWatchDate = today;
-              saveUserState();
+              await saveUserState();
           }
 
           if (currentUser.adsWatchedToday >= ADS_PER_DAY_LIMIT) {
@@ -1764,7 +1829,7 @@
           adModal.classList.add('show');
       }
 
-      function closeAdModalAndReward() {
+      async function closeAdModalAndReward() {
           adModal.classList.remove('show');
           if (adWatchedSuccessfully && adRewardPending) {
               currentUser.points += POINTS_PER_AD;
@@ -1772,7 +1837,7 @@
               currentUser.totalAdsWatchedLifetime++;
               currentUser.lastAdWatchDate = new Date().toLocaleDateString();
               updateUI();
-              saveUserState();
+              await saveUserState();
               showToast(`+${POINTS_PER_AD} Taka earned!`);
           } else if (adRewardPending && !adWatchedSuccessfully) {
               showToast("Ad not completed. No Taka awarded.");
@@ -1782,11 +1847,11 @@
       }
 
       // Bonus channel handling
-      function handleBonusLinkClick(event, buttonElement) {
+      async function handleBonusLinkClick(event, buttonElement) {
           const channelId = buttonElement.dataset.channelId;
           const reward = parseInt(buttonElement.dataset.reward);
 
-          if (currentUser.claimedBonuses.includes(channelId)) {
+          if (currentUser.claimedBonuses && currentUser.claimedBonuses.includes(channelId)) {
               showToast("Bonus already claimed!");
               return;
           }
@@ -1797,12 +1862,15 @@
           buttonElement.textContent = 'Verifying...';
           buttonElement.style.pointerEvents = 'none';
 
-          setTimeout(() => {
-              if (!currentUser.claimedBonuses.includes(channelId)) {
+          setTimeout(async () => {
+              if (!currentUser.claimedBonuses || !currentUser.claimedBonuses.includes(channelId)) {
                   currentUser.points += reward;
+                  if (!currentUser.claimedBonuses) {
+                      currentUser.claimedBonuses = [];
+                  }
                   currentUser.claimedBonuses.push(channelId);
                   updateUI();
-                  saveUserState();
+                  await saveUserState();
                   buttonElement.textContent = 'Claimed';
                   buttonElement.classList.add('claimed');
                   showToast(`+${reward} bonus Taka claimed!`);
@@ -1815,7 +1883,7 @@
       }
 
       // Withdrawal handling
-      function handleSubmitWithdrawal() {
+      async function handleSubmitWithdrawal() {
           const amount = parseInt(document.getElementById('withdrawAmountInput').value);
           const method = document.getElementById('withdrawMethodSelect').value;
           const account = document.getElementById('withdrawAccountInput').value.trim();
@@ -1867,25 +1935,25 @@
               };
 
               const withdrawalDetails = `
- *   * 
+🔔 *𝗡𝗲𝘄 𝗪𝗶𝘁𝗵𝗱𝗿𝗮𝘄𝗮𝗹 𝗥𝗲𝗾𝘂𝗲𝘀𝘁 * 🔔
 ------------------------------------
- *  :* \`${escapeMarkdown(APP_NAME)}\`
- *  :* \`${escapeMarkdown(currentUser.name)}\`
- * :* ${amount}
- * :* ${escapeMarkdown(method)}
- * :* \`${escapeMarkdown(account)}\`
+🕵️ *𝗔𝗽𝗽 𝗡𝗮𝗺𝗲 :* \`${escapeMarkdown(APP_NAME)}\`
+👤 *𝗨𝘀𝗲𝗿 𝗡𝗮𝗺𝗲 :* \`${escapeMarkdown(currentUser.name)}\`
+💰 *𝗣𝗼𝗶𝗻𝘁𝘀 :* ${amount}
+💳 *𝗠𝗲𝘁𝗵𝗼𝗱 :* ${escapeMarkdown(method)}
+🏦 *𝗪𝗮𝗹𝗹𝗲𝘁 :* \`${escapeMarkdown(account)}\`
 ------------------------------------
-   : ${currentUser.points - amount}
-    : ${currentUser.totalAdsWatchedLifetime}
+♎ 𝗠𝗮𝗶𝗻 𝗕𝗮𝗹𝗮𝗻𝗰𝗲 : ${currentUser.points - amount}
+👀 𝗧𝗼𝘁𝗮𝗹 𝗔𝗱𝘀 𝗪𝗮𝘁𝗰𝗵𝗲𝗱 : ${currentUser.totalAdsWatchedLifetime}
 ------------------------------------
- *  :* ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}
+⏰ *𝗪𝗶𝘁𝗵𝗱𝗿𝗮𝘄𝗮𝗹 𝗧𝗶𝗺𝗲 :* ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}
               `;
 
               sendToTelegram(withdrawalDetails);
 
               currentUser.points -= amount;
               updateUI();
-              saveUserState();
+              await saveUserState();
 
               statusMsg.textContent = "Withdrawal Request Successful";
               statusMsg.classList.add('success-message');
@@ -1958,15 +2026,15 @@
           };
 
           const message = `
- *New Referral Bonus!* 
+🎉 *New Referral Bonus!* 🎉
 ------------------------------------
- *New User:* \`${escapeMarkdown(refereeName)}\` (Code: \`${escapeMarkdown(refereeCode)}\`)
- *Received:* ${REFERRAL_BONUS_REFEREE} Taka
+👥 *New User:* \`${escapeMarkdown(refereeName)}\` (Code: \`${escapeMarkdown(refereeCode)}\`)
+🌟 *Received:* ${REFERRAL_BONUS_REFEREE} points
 Referral From:
- *Referrer:* \`${escapeMarkdown(referrerName)}\` (Code: \`${escapeMarkdown(referrerCode)}\`)
- *Received:* ${REFERRAL_BONUS_REFERRER} Taka
+👤 *Referrer:* \`${escapeMarkdown(referrerName)}\` (Code: \`${escapeMarkdown(referrerCode)}\`)
+🌟 *Received:* ${REFERRAL_BONUS_REFERRER} points
 ------------------------------------
- *Timestamp:* ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}
+⏰ *Timestamp:* ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}
             `;
 
           const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -1998,13 +2066,8 @@ Referral From:
           .catch(error => console.error('Error sending referral Telegram message:', error));
       }
 
-      // Save user state to localStorage
-      function saveUserState() {
-          const deviceId = localStorage.getItem('galaxyEarnDeviceId');
-          let allUsersData = JSON.parse(localStorage.getItem('galaxyEarnAllUsers')) || {};
-          allUsersData[deviceId] = currentUser;
-          localStorage.setItem('galaxyEarnAllUsers', JSON.stringify(allUsersData));
-      }
+      // Make functions globally available for onclick handlers
+      window.handleBonusLinkClick = handleBonusLinkClick;
   </script>
 </body>
 </html>
